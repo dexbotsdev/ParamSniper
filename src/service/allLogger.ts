@@ -3,11 +3,11 @@ import Logger, { LoggerOptions } from "@ptkdev/logger";
 const options :LoggerOptions = {
 	"language": "en", // set language of log type, NOTE: please help with translations! (optional, default en - values: en|it|pl|es|pt|de|ru)
 	"colors": true,  // enable/disable colors in terminal (optional, default enabled - values: true|enabled or false|disabled)
-	"debug": true,   // enable/disable all logs with method debug (optional, default enabled - values: true|enabled or false|disabled)
-	"info": true,    // enable/disable all logs with method info (optional, default enabled - values: true|enabled or false|disabled)
-	"warning": true, // enable/disable all logs with method warning (optional, default enabled -  values: true|enabled or false|disabled)
+	"debug": false,   // enable/disable all logs with method debug (optional, default enabled - values: true|enabled or false|disabled)
+	"info": false,    // enable/disable all logs with method info (optional, default enabled - values: true|enabled or false|disabled)
+	"warning": false, // enable/disable all logs with method warning (optional, default enabled -  values: true|enabled or false|disabled)
 	"error": true,   // enable/disable all logs with method errors (optional, default enabled - values: true|enabled or false|disabled)
-	"sponsor": true, // enable/disable all logs with method sponsor (optional, default enabled - values: true|enabled or false|disabled)
+	"sponsor": false, // enable/disable all logs with method sponsor (optional, default enabled - values: true|enabled or false|disabled)
 	"write": true,   // write the logs into a file, you need set path values (optional, default disabled - values: true|enabled or false|disabled)
 	"type": "json",   // format of logs in files (optional, default log - values: log|json)
 	"rotate": {
@@ -15,8 +15,8 @@ const options :LoggerOptions = {
 		"encoding": "utf8"
 	},
 	"path": {        // if write is true, the library writes the logs to a path
-		"debug_log": "./logs/debug.json",  // all logs  
-		"error_log": "./logs/errors.json", // only errors logs
+		"debug_log": "./logs/AllTokensLogger.json",  // all logs  
+		"error_log": "./logs/AllError.json", // only errors logs
 	},
 	"palette": {
 		"info": {
@@ -61,6 +61,6 @@ const options :LoggerOptions = {
 	}
 };
 
-const logger = new Logger(options); 
+const allLogger = new Logger(options); 
 
-export default logger;
+export default allLogger;

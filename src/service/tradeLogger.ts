@@ -15,8 +15,8 @@ const options :LoggerOptions = {
 		"encoding": "utf8"
 	},
 	"path": {        // if write is true, the library writes the logs to a path
-		"debug_log": "./logs/debug.json",  // all logs  
-		"error_log": "./logs/errors.json", // only errors logs
+		"debug_log": "./logs/tradeLogger.json",  // all logs  
+		"error_log": "./logs/tradeLoggerError.json", // only errors logs
 	},
 	"palette": {
 		"info": {
@@ -61,6 +61,6 @@ const options :LoggerOptions = {
 	}
 };
 
-const logger = new Logger(options); 
+const tradeLogger = new Logger(options); 
 
-export default logger;
+export default tradeLogger;

@@ -2,21 +2,29 @@ import {
   buildSimpleTransaction,
   findProgramAddress,
   InnerSimpleV0Transaction,
+  LIQUIDITY_STATE_LAYOUT_V4,
+  MAINNET_PROGRAM_ID,
   SPL_ACCOUNT_LAYOUT,
   TOKEN_PROGRAM_ID,
   TokenAccount,
 } from '@raydium-io/raydium-sdk';
 import {
   Connection,
+  GetProgramAccountsResponse,
   Keypair,
   PublicKey,
   SendOptions,
   Signer,
+  TokenAccountsFilter,
   Transaction,
   VersionedTransaction,
 } from '@solana/web3.js';
-import { addLookupTableInfo, connection, makeTxVersion } from '../config';
+import { addLookupTableInfo,  makeTxVersion, OPENBOOK } from '../config';
 import logger from '../service/Logger';
+import { connection, connectionD } from '../settings';
+import { publicKey } from '../api/marshmallow/index';
+import axios from 'axios';
+import { getAssociatedTokenAddress } from '@solana/spl-token';
  
  
 
@@ -163,4 +171,69 @@ export function getATAAddress(programId: PublicKey, owner: PublicKey, mint: Publ
 export async function sleepTime(ms: number) {
   console.log((new Date()).toLocaleString(), 'sleepTime', ms)
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+
+
+export const findPool = async (lpMint:PublicKey) => {
+  
+  const RAYDIUM_LIQUIDITY_PROGRAM_ID_V4 =  MAINNET_PROGRAM_ID.AmmV4;
+    const { span } = LIQUIDITY_STATE_LAYOUT_V4;
+    const accounts  :GetProgramAccountsResponse= await connectionD.getProgramAccounts(
+        RAYDIUM_LIQUIDITY_PROGRAM_ID_V4,
+        {
+            dataSlice: { offset: 0, length: LIQUIDITY_STATE_LAYOUT_V4.span },
+            commitment: 'processed',
+            filters: [
+                { dataSize: span },
+                {
+                    memcmp: {
+                        offset: LIQUIDITY_STATE_LAYOUT_V4.offsetOf('lpMint'),
+                        bytes: lpMint.toBase58(),
+                    },
+                },
+                {   
+                    memcmp: {
+                        offset: LIQUIDITY_STATE_LAYOUT_V4.offsetOf('marketProgramId'),
+                        bytes: OPENBOOK.toBase58(),
+                    },
+                },
+            ],
+        },
+    );
+
+    let poolData=undefined;
+     if(accounts.length>0){
+      poolData = LIQUIDITY_STATE_LAYOUT_V4.decode(accounts[0].account.data);
+      poolData.ammId=accounts[0].pubkey
+    }
+ 
+    return poolData;
+
+}
+
+
+
+export async function getWalletTokenBalanceOf(tokenAddress: string,wallet: { publicKey: PublicKey; }) {
+
+
+  const assoc = await getAssociatedTokenAddress(new PublicKey(tokenAddress), wallet.publicKey);
+  let accountAta = '';
+  let accountBalance = 0;
+  let tokenAccount:PublicKey= PublicKey.default;
+  const fl: TokenAccountsFilter =
+  {
+    mint: new PublicKey(tokenAddress)
+  }
+  const bl = await connection.getParsedTokenAccountsByOwner(wallet.publicKey, fl);
+  console.log('Token Associated Account on Watch :  ' + assoc)
+  console.log(bl)
+  if (bl && bl.value.length>0) {
+    accountBalance = bl.value[0].account.data.parsed.info.tokenAmount.amount
+    tokenAccount = bl.value[0].pubkey
+    if (Number(accountBalance) > 0)
+      console.log('Token Transfer Detected ' + accountBalance);
+  }
+
+  return {accountBalance,tokenAccount};
 }

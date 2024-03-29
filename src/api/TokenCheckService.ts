@@ -1,9 +1,10 @@
 import { Connection, PublicKey } from '@solana/web3.js';
-import { RAYDIUM, connection as web3con } from '../config';
+import { RAYDIUM, } from '../config';
 import logger from '../service/Logger';
 import { Metaplex } from '@metaplex-foundation/js';
 import { WSOL ,LIQUIDITY_STATE_LAYOUT_V4} from '@raydium-io/raydium-sdk';
 import axios from 'axios';
+import { connectionD as connection } from '../settings';
 
 class TokenCheckService {
     private async _analyseMarket(result: any, i: number): Promise<any> {
@@ -33,7 +34,7 @@ class TokenCheckService {
         const holders = await this.connection.getTokenLargestAccounts(lpMint, "confirmed")
 
         const topHolders = holders.value
-        this.result.holdersCount = topHolders.length;
+        //this.result.holdersCount = topHolders.length;
         this.result.quoteMint = quoteMint.toString(),
             this.result.liquidityToken = baseLiq.value.uiAmount!,
             this.result.liquidityUSDC = (quoteLiq.value.uiAmount! * quotePrice);
@@ -86,6 +87,7 @@ class TokenCheckService {
         holdersCount: number;
         largeHolderPct: number;
         mutable: boolean;
+        tokenLinks:number;
 
     }
     lockerOwners: Map<string, boolean> = new Map([
@@ -102,7 +104,7 @@ class TokenCheckService {
 
     constructor(tokenAddress: string) {
         this.tokenMint = tokenAddress;
-        this.connection = web3con;
+        this.connection = connection;
         this.mint = new PublicKey(tokenAddress);
         this.knownAccounts = JSON.parse('{"5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1":{"name":"Raydium AMM","type":"AMM"},"CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK":{"name":"Raydium CLAMM","type":"AMM"},"CPK8fQYShAmERZmysQRAGWPvV5qs3AvazQsiR9ctC6ED":{"name":"Raydium CLAMM LP","type":"AMM"},"whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc":{"name":"Orca Whirlpool","type":"AMM"},"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":{"name":"USDC","type":"token"},"USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX":{"name":"USDH","type":"token"},"So11111111111111111111111111111111111111112":{"name":"SOL","type":"token"},"4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R":{"name":"Raydium","type":"token"},"beamazjPnFT3JQoe16HjUxkpmHFfsHY6dTqf3VwBXzq":{"name":"FluxBeam LP","type":"AMM"},"USRfPB8M8pfbrFnEt3FDf3Y8ZmU4G17wcRsWBUK416m":{"name":"FluxBot User Rewards","type":"AMM"},"RESWbt45deYa8F7mQ53pGGJ3XECYC15EGK7cM738mrN":{"name":"FluxBot Reserves","type":"AMM"}}')
         this.result = {
@@ -126,7 +128,8 @@ class TokenCheckService {
             largeHolderPct: 0,
             mutable: true,
             feeModifiable: false,
-            poolOpenTime:0
+            poolOpenTime:0,
+            tokenLinks:0
         };
 
     }
@@ -158,11 +161,25 @@ class TokenCheckService {
 
 
         const metaplex = Metaplex.make(this.connection);
-        const token = await metaplex.nfts().findByMint({ mintAddress: this.mint });
+        const token = await metaplex.nfts().findByMint({ mintAddress: this.mint }); 
+ 
+        if(token.json){
+            const extensions:any = token.json.extensions
+            if(extensions){
+                if(extensions.twitter)this.result.tokenLinks++;
+                if(extensions.telegram)this.result.tokenLinks++;
+                if(extensions.website)this.result.tokenLinks++;
+            }
+        }
 
-
-        this.result.tokenName = token.name;
-        this.result.tokenName = token.name;
+        const desc= token.json ? token.json.description :''; 
+        if(desc.indexOf('t.me'))this.result.tokenLinks++;
+        if(desc.indexOf('.com'))this.result.tokenLinks++; 
+        if(desc.indexOf('.xyz'))this.result.tokenLinks++; 
+        if(desc.indexOf('.wtf'))this.result.tokenLinks++; 
+        if(desc.indexOf('x.com'))this.result.tokenLinks++; 
+ 
+        this.result.tokenName = token.name; 
         this.result.tokenSymbol = token.symbol;
         this.result.tokenSupply = token.mint.supply.basisPoints.toString();
         this.result.tokenDecimals = token.mint.decimals;
@@ -194,30 +211,31 @@ class TokenCheckService {
 
         const topHolders = await this.connection.getTokenLargestAccounts(this.mint, "confirmed")
         this.topHolders = topHolders.value
+        // this.mylog("topHolders", this.topHolders)
 
 
+        const holderKeys:  PublicKey[] = []
+        this.topHolders.forEach((h: { address: PublicKey; }) => holderKeys.push(h.address))
+        const accountInfo = await this.connection.getMultipleParsedAccounts(holderKeys)
 
-        const holderKeys: PublicKey[] = []
-        this.topHolders.forEach((h) => holderKeys.push(h.address))
-        const accountInfo = await this.connection.getMultipleParsedAccounts(holderKeys, {
-            dataSlice: { offset: 0, length: 5 }
-        })
+ 
 
         //@ts-ignore
         accountInfo.value.forEach((a, k) => {
 
             try {
-                // console.log(this.topHolders[k]);
-                // console.log(a.data);
+                 // console.log(this.topHolders[k]);
+                 //console.log(a.data);
                 //@ts-ignore
                 this.topHolders[k].data = a.data?.parsed
             } catch (Error) {
-                //logger.error('Minor Calculation Error')
+                 logger.error('Minor Calculation Error')
             }
 
 
         })
 
+        console.log('calling analyze holders ');
         this._analyseHolders()
 
         const rayMarkets = await this.getRaydiumMarkets(this.mint)
@@ -239,10 +257,10 @@ class TokenCheckService {
             //@ts-ignore
             this.result.totalLPLiquidity += results[i]
         }
-
+        
         //@ts-ignore
         this.markets = this.markets.filter(f => f.lp)
-
+ 
         let totalLPHolders = 0;
         for (let i = 0; i < this.markets.length; i++) {
             const mkt = this.markets[i]
@@ -253,10 +271,9 @@ class TokenCheckService {
             this.markets[i].lp.pctSupply = (mkt.lp.quoteUSD / this.result.totalLPLiquidity) * 100
             //@ts-ignore
             totalLPHolders += mkt.lp.holders.length
-        }
 
-        this.result.holdersCount = totalLPHolders;
-
+ 
+        } 
 
         return this.result;
 
@@ -268,25 +285,38 @@ class TokenCheckService {
     _analyseHolders() {
         const total_supply = Number(this.token.supply)
 
-        let top10 = 0;
+         let top10 = 0;
         let total = 0;
+        let maxpct = 0;
+        let maxholder='';
         this.topHolders.forEach(((h, key) => {
 
             //@ts-ignore
-            const pct = (h.amount / total_supply) * 100
-            this.result.holdersCount++;
+            const pct = (h.amount / total_supply) * 100 
+
+            this.result.holdersCount = this.result.holdersCount+1;
+
+ 
+            
             //@ts-ignore
             const known = this.knownAccounts[h.data?.info.owner.toString() || h.address.toString()]
-
-            if (known && known.type == 'AMM') {
+             if (known && known.type == 'AMM') {
                 this.result.ammLiquidityPct = pct;
                 this.result.ammLiquidity = h.amount;
+            }    
+            if(pct>maxpct){ 
+                maxpct= pct;
+                maxholder=h.data?.info.owner.toString()  
+                this.result.largeHolderPct += Number(maxpct);
+
             }
             if (key < 10 && (!known || known.type !== 'AMM')) {
                 top10 += pct
                 total += pct
             }
         }))
+
+        return this.result;
     }
 
 

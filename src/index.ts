@@ -1,118 +1,210 @@
 import { EventEmitter } from 'emitter'
 import fs from 'fs'
-import logger from './service/Logger'; 
-import TelegramAccountService from './service/TelegramAccountService';
-import { Channels, sequelize, TokenCalls } from './database/db';
-import moment from 'moment';
+import logger from './service/Logger';
+import { sequelize, TradeLogs } from './database/db';
 import { Connection, Keypair, PublicKey } from '@solana/web3.js';
-import { Wallet } from '@project-serum/anchor';
+import { getWalletTokenBalance } from './utils/util';
+import NewBurnFinderService from './service/NewBurnFinderService';
+import { connection, MAINNET_API_HTTP, MAINNET_AUTH_HEADER } from './settings';
 import { bs58 } from '@project-serum/anchor/dist/cjs/utils/bytes';
-import { Liquidity, Market } from '@raydium-io/raydium-sdk';
-import { Metaplex } from '@metaplex-foundation/js';
- 
+import { HttpProvider } from '@bloxroute/solana-trader-client-ts';
+import { requestConfig } from './config';
+import TradeService from './service/TradeService';
+import { Config } from 'types/type';
+import allLogger from './service/allLogger';
+import tradeLogger from './service/tradeLogger';
+
 const eventEmitter = new EventEmitter();
 eventEmitter.setMaxListeners(999);
 
-let config = null;
- async function start() {
+async function start() {
   await sequelize.sync({ force: false, alter: true });
-
-
-  fs.readFile('./client.config.json', 'utf8', async (error, data) => {
+  fs.readFile('./client.config.json', 'utf8', (error: any, data) => {
     if (error) {
-    //logger.debug(error);
+      logger.debug(error);
       return;
     }
-    const config = JSON.parse(data); 
-    
-    const connection = new Connection('https://api.mainnet-beta.solana.com', { commitment: "finalized" });
-   
-    const version :  4 | 5 = 4;
-    const serumVersion = 10
-    const marketVersion:3 = 3
+    let config :Config= JSON.parse(data);
+    let testmode = Boolean(config.testMode);
+    const wallet = Keypair.fromSecretKey(Uint8Array.from(config.privateKey));
+    const provider = new HttpProvider(
+      MAINNET_AUTH_HEADER,
+      bs58.encode(config.privateKey),
+      MAINNET_API_HTTP,
+      requestConfig
+    )
 
-    const poolId = new PublicKey("8eve16u96wjbcjB9NW623wyJRbKowaR8wnXncRjKgKen")
-  
-    const programId = new PublicKey('675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8');
-    const serumProgramId = new PublicKey('srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX')
-  
-    const account = await connection.getAccountInfo(poolId)
-    const { state: LiquidityStateLayout }  = Liquidity.getLayouts(version)
-  
-    //@ts-ignore
-    const fields = LiquidityStateLayout.decode(account?.data);
-    const { status, baseMint, quoteMint, lpMint, openOrders, targetOrders, baseVault, quoteVault, marketId, baseDecimal, quoteDecimal, poolOpenTime} = fields;
-  
-    let withdrawQueue, lpVault;
-    if (Liquidity.isV4(fields)) {
-      withdrawQueue = fields.withdrawQueue;
-      lpVault = fields.lpVault;
-    } else {
-      withdrawQueue = PublicKey.default;
-      lpVault = PublicKey.default;
-    }
-    
-    // uninitialized
-    // if (status.isZero()) {
-    //   return ;
-    // }
-  
-    const associatedPoolKeys = Liquidity.getAssociatedPoolKeys({
-      version:version,
-      marketVersion,
-      marketId,
-      baseMint: baseMint,
-      quoteMint:quoteMint,
-      baseDecimals: baseDecimal.toNumber(),
-      quoteDecimals: quoteDecimal.toNumber(),
-      programId,
-      marketProgramId:serumProgramId,
+    let openTrades=0;
+
+    if (testmode) logger.warning('RUNNING IN TEST MODE, NO TRADES WILL BE TAKEN');
+
+    config.connection = connection;
+    config.wallet = wallet;
+
+    const burnFinder = new NewBurnFinderService(config, eventEmitter);
+    const trader = new TradeService(config, provider, wallet);
+
+    burnFinder.start();
+
+    eventEmitter.on('newListener', (event: string, listener: any) => {
+      logger.debug(`Added  listener for ${event.toUpperCase()} .`);
     });
-  
-    const poolKeys = {
-      id: poolId,
-      baseMint,
-      quoteMint,
-      lpMint,
-      version,
-      programId,
-  
-      authority: associatedPoolKeys.authority,
-      openOrders,
-      targetOrders,
-      baseVault,
-      quoteVault,
-      withdrawQueue,
-      lpVault,
-      marketVersion: serumVersion,
-      marketProgramId: serumProgramId,
-      marketId,
-      marketAuthority: associatedPoolKeys.marketAuthority,
-    };
-  
-    const marketInfo = await connection.getAccountInfo(marketId);
-    const { state: MARKET_STATE_LAYOUT } = Market.getLayouts(marketVersion);
-    //@ts-ignore
-    const market = MARKET_STATE_LAYOUT.decode(marketInfo.data);
 
-    console.log(new Date(1000*Number(poolOpenTime.toString())).toString());
+    eventEmitter.on('buyOrderCompleted', async (monitor: any) => {
 
-    const tokenMint = market.baseMint;
+      logger.sponsor(JSON.stringify(monitor,null,0));
+      const tokenMint = new PublicKey(monitor.tokenAddress);
+      let tokenBalance = await getWalletTokenBalance(connection, wallet.publicKey, tokenMint);
 
-    const metaplex = Metaplex.make(connection);
-   
-     
-    const token = await metaplex.nfts().findByMint({ mintAddress: tokenMint });
-    let tokenName = token.name;
-    let tokenSymbol = token.symbol;
-    let sellerFeeBasisPoints = token.mint.supply.basisPoints.toString();
-    let tokenDecimals = token.mint.decimals;
+      if(config.testMode==true){
+        const resp = await trader.getBuyPrice(monitor.tokenAddress, config.buyInputAmount,config.slippageFixed);
+        tokenBalance = resp.outAmount.toFixed();
+      }
+
+      logger.info('Current Token Balance is '+ tokenBalance);
+      const avgBuyPrice = Number(Number(config.buyInputAmount)/Number(tokenBalance)).toFixed(12);
+
+      monitor.avgBuyPrice = avgBuyPrice;
+      monitor.tokenBalance = tokenBalance;
  
-     console.log(tokenName);
-    console.log(tokenSymbol);
-    console.log(sellerFeeBasisPoints.toString());
-    console.log(tokenDecimals     ); 
- 
+      const tokenTrades = new TradeLogs(monitor);
+      await tokenTrades.save();
+    
+       logger.debug(' Keep Polling for Prices and Sell off ')
+
+       trader.monitorToken(monitor)
+
+
+    })
+    eventEmitter.on('newLpBurnedSignal', async (signal: any) => {
+      logger.error('Received ');
+      const tradeSignal = JSON.parse(signal);
+
+       const oldSignal = await TradeLogs.findOne({
+        where: {
+          tokenAddress: tradeSignal.tokenAddress
+        }
+      })
+      let tokenTrade = {
+        tokenSymbol: tradeSignal.tokenSymbol,
+        tokenAddress: tradeSignal.tokenAddress,
+        buyTime: Date.now(),
+        buyAmount: config.buyInputAmount,
+        sellTime: null,
+        sellAmount: 0,
+        sold: false,
+        avgBuyPrice: 0
+      }
+
+      allLogger.info('New Token',JSON.stringify(tokenTrade));
+      
+      if (oldSignal && oldSignal.dataValues && oldSignal.dataValues.tokenAddress && !testmode) {
+        logger.error('skipping Duplicates')
+      } else {
+
+
+        try {
+          const pot = new Date(Number(tradeSignal.poolOpenTime) * 1000);
+          const nowd = Date.now();
+
+          if (nowd < pot.getTime()) {
+            logger.debug('Pool is Not Yet Opened for Trading ');
+            return;
+
+          }
+          const mcCheck = Number(config.minLiquidity) <= Number(tradeSignal.liquiditySOL) ? 'OK' : 'Failed Liquidity Check of ' + Number(config.minLiquidity) + ' SOLS';
+          const fdvCheck = Number(tradeSignal.liquidityUSDC) >= Number(config.maxTokenMC) ? 'OK' : ' Failed Mcap check of ' + Number(config.maxTokenMC) + ' ';
+          const mintableCheck = !tradeSignal.mintable ? 'OK' : ' Failed Mintable Check : Token is Mintable ';
+          const freeZableCheck = !tradeSignal.freezeaBle ? 'OK' : ' Failed Freezable Check : Token is Freezable ';
+          const linksCheck = tradeSignal.tokenLinks && tradeSignal.tokenLinks>1 ? 'OK' : ' Failed Token Links Check : Token Doesnt Have Links' ;
+
+          if (mcCheck == 'OK' && fdvCheck == 'OK' && mintableCheck == 'OK' && freeZableCheck == 'OK' && linksCheck=='OK') {
+            logger.debug(' Preparing Token Info for Buy/sell ' + tradeSignal.tokenSymbol + ' with 0.01 ' + tradeSignal.quoteSymbol);
+
+            if(openTrades >= config.maxOpenTrades){
+
+              logger.debug('MAX Open Trades Reached cannot Open more trades ');
+              return false;
+
+            }
+
+            openTrades++
+            logger.debug(' Buying Token ' + tradeSignal.tokenSymbol + ' with ' + config.buyInputAmount);
+            try {
+              logger.debug(' Buying Token ' + tradeSignal.tokenSymbol + ' with  '+config.buyInputAmount+' ' + tradeSignal.quoteSymbol);
+
+              trader.buyToken(tradeSignal.tokenAddress, config.buyInputAmount, config.slippageFixed,config.testMode).then(async (result) => {
+
+
+
+                 logger.debug('Token Bought -- Checking Transaction - Create Websocket and Listen.')
+
+                if(config.testMode){
+                  const monitor = {
+                    tokenAddress: tradeSignal.tokenAddress,
+                    tokenSymbol: tradeSignal.tokenSymbol,
+                    decimals: tradeSignal.tokenDecimals,
+                    tnxSignature: result
+                  }
+
+                 
+                  tradeLogger.info('Traded  Token',JSON.stringify(tokenTrade));
+                  eventEmitter.emit('buyOrderCompleted', monitor);
+                } else
+
+                connection.onSignature(result, (sigresult) => {
+                  logger.debug('Listening to Data ')
+
+                  if (sigresult.err == null) {
+
+                    logger.debug('Emitting Token Data for Sell Monitoring ')
+                    const monitor = {
+                      tokenAddress: tradeSignal.tokenAddress,
+                      tokenSymbol: tradeSignal.tokenSymbol,
+                      decimals: tradeSignal.tokenDecimals,
+                      tnxSignature: result
+                    }
+
+                   
+                    tradeLogger.info('Traded  Token',JSON.stringify(tokenTrade));
+                    eventEmitter.emit('buyOrderCompleted', monitor);
+                  }
+                })
+              }).catch((Error) => {
+
+                console.log('Buy Failed ' + Error);
+              })
+
+            } catch (error) {
+              logger.error(error)
+            }
+          } else {
+
+            logger.error('Liquidity Check :- ' + mcCheck + ' Actual ' + Number(tradeSignal.liquiditySOL).toFixed(2));
+            logger.error('Mcap check :-  ' + fdvCheck + ' Actual ' + Number(tradeSignal.liquidityUSDC).toFixed(2));
+            logger.error('Mintable check :-  ' + mintableCheck + ' Actual ' + tradeSignal.mintable);
+            logger.error('Freezable check  :- ' + freeZableCheck + ' Actual ' + tradeSignal.freezeaBle);
+            logger.error('Token Links check  :- ' + linksCheck + ' Actual ' + tradeSignal.tokenLinks);
+          }
+        } catch (error) {
+          logger.debug(error)
+        }
+      }
+
+    });
+
+
+    eventEmitter.on('Disconnected', (message: string) => {
+      logger.debug('Disconnected -- need to restart ' + message.toUpperCase());
+      eventEmitter.removeAllListeners();
+      start();
+
+    });
+
+
+
+
+
   })
 }
 

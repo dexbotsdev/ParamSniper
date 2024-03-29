@@ -1,5 +1,5 @@
 import { QueryTypes } from "sequelize";
-import { TokenCalls, sequelize } from "./db";
+import {   sequelize } from "./db";
 import { EventEmitter } from 'emitter'
 import { getPairData } from "../processor/TokenProcessor";
 
@@ -93,11 +93,11 @@ export const getTokenStats=async (tradingSignal:any)=>{
                 const roi= Number(((tradingSignal.currPrice-x.currPrice)/x.currPrice)*100).toFixed(2)
                 x.athROI = roi;
 
-                TokenCalls.update({ athROI: roi }, {
-                    where: {
-                        tokenAddress: x.tokenAddress,
-                    },
-                  });
+                // TokenCalls.update({ athROI: roi }, {
+                //     where: {
+                //         tokenAddress: x.tokenAddress,
+                //     },
+                //   });
 
             }  
       })
